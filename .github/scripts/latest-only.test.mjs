@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { enforceLatestOnly, repository } from './latest-only.mjs';
+import { enforceLatestOnly, repository, validateCaller } from './latest-only.mjs';
 
 const base = `repos/${repository}/releases`;
 const release = (id, overrides = {}) => ({
@@ -128,4 +128,28 @@ test('an unexpected mutation response is never reported as success', async () =>
     if (args[0] === 'PATCH') return release(2);
     return state.api(...args);
   } }), /did not unpublish/);
+});
+
+test('release CI keeps exactly the version it just published', async () => {
+  const state = fixture([release(3), release(2), release(1)], 3);
+  await run(state, { expectedTag: 'v0.1.3' });
+  assert.deepEqual(state.patches, [2, 1]);
+});
+
+test('a stale or incorrect CI version fails before any changes', async () => {
+  for (const expectedTag of ['v0.1.2', 'v0.1.4', '0.1.3', 'v0.1.3-beta', '', 'v$(whoami)']) {
+    const state = fixture([release(3), release(2)], 3);
+    await assert.rejects(run(state, { expectedTag }), /Expected/);
+    assert.deepEqual(state.patches, []);
+  }
+});
+
+test('only known repositories can invoke the policy and source CI requires a version', () => {
+  validateCaller(undefined, undefined);
+  validateCaller(repository, undefined);
+  validateCaller('Doronn4/photo-takeout-fixer', 'v0.1.3');
+  assert.throws(() => validateCaller('unrelated/repository', 'v0.1.3'), /dedicated/);
+  for (const expected of [undefined, '', 'v0.1.3-beta', '0.1.3']) {
+    assert.throws(() => validateCaller('Doronn4/photo-takeout-fixer', expected), /PTF_EXPECTED_RELEASE_TAG/);
+  }
 });

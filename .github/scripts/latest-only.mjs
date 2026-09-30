@@ -56,8 +56,14 @@ async function listReleases(api) {
 }
 
 // Keep assets intact as owner-only drafts. Nothing is deleted or re-uploaded.
-export async function enforceLatestOnly({ api = githubApi, apply = false, log = console.log } = {}) {
+export async function enforceLatestOnly({ api = githubApi, apply = false, expectedTag, log = console.log } = {}) {
+  if (expectedTag !== undefined && !/^v\d+\.\d+\.\d+$/.test(expectedTag)) {
+    throw Error('Expected release tag must be a stable version such as v0.1.3.');
+  }
   const latest = validateLatest(await api('GET', `${releasesPath}/latest`));
+  if (expectedTag !== undefined && latest.tag_name !== expectedTag) {
+    throw Error(`Expected ${expectedTag} to be latest, but GitHub reports ${latest.tag_name}; nothing changed.`);
+  }
   const releases = await listReleases(api);
   if (!releases.some(release => release.id === latest.id && !release.draft && !release.prerelease)) {
     throw Error('Latest release changed during inventory; retry.');
@@ -95,10 +101,19 @@ export async function enforceLatestOnly({ api = githubApi, apply = false, log = 
   return { latest: latest.tag_name, hidden: obsolete.map(release => release.tag_name), applied: apply };
 }
 
+export function validateCaller(workflowRepository, expectedTag) {
+  const sourceRepository = 'Doronn4/photo-takeout-fixer';
+  if (workflowRepository && ![repository, sourceRepository].includes(workflowRepository)) {
+    throw Error('Run this workflow only in the dedicated downloads or source repository.');
+  }
+  if (workflowRepository === sourceRepository && !/^v\d+\.\d+\.\d+$/.test(expectedTag ?? '')) {
+    throw Error('Source release CI must specify PTF_EXPECTED_RELEASE_TAG.');
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv.slice(2).some(arg => arg !== '--apply')) throw Error('Usage: node latest-only.mjs [--apply]');
-  if (process.env.GITHUB_REPOSITORY && process.env.GITHUB_REPOSITORY !== repository) {
-    throw Error('Run this workflow only in the dedicated public downloads repository.');
-  }
-  await enforceLatestOnly({ apply: process.argv.includes('--apply') });
+  const expectedTag = process.env.PTF_EXPECTED_RELEASE_TAG;
+  validateCaller(process.env.GITHUB_REPOSITORY, expectedTag);
+  await enforceLatestOnly({ apply: process.argv.includes('--apply'), expectedTag });
 }
