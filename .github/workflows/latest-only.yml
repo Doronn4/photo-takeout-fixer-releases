@@ -1,0 +1,51 @@
+name: Keep only the latest public release
+
+on:
+  release:
+    types: [published, edited]
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '37 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest-public-release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Release events can point at old tags; always run the current policy.
+          ref: ${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+      - run: node --test .github/scripts/latest-only.test.mjs
+
+  enforce:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+      - name: Retain only the latest published stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/latest-only.mjs --apply
